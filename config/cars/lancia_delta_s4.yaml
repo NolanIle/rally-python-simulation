@@ -1,0 +1,11 @@
+# Lancia Delta S4 (Group B) - parameters for the placeholder kinematic model.
+# Every value is marked with its source or as an estimate.
+# TODO: Checkupon the current values
+name: Lancia Delta S4
+wheelbase_m: 2.44              # approximate published figure, verify
+max_steer_deg: 30              # estimate
+steer_rate_deg_s: 360          # estimate: how fast the front wheels can turn
+max_accel_m_s2: 6.0            # estimate, placeholder model only
+max_brake_m_s2: 9.0            # estimate, about 0.9 g
+drag_coeff_per_m: 0.0019       # tuned so top speed is about 200 km/h
+rolling_resistance_m_s2: 0.15  # estimate
