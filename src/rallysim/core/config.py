@@ -1,6 +1,6 @@
 """Load YAML configuration into validated, immutable parameter objects.
 
-Config files may use convenient units (degrees, km/h); everything is
+Config files may use convenient units (degrees, kW); everything is
 converted to SI here, so the rest of the code only ever sees SI units.
 """
 
@@ -21,22 +21,30 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class CarParams:
     name: str
+    mass: float  # [kg]
+    max_power: float  # [W]
     wheelbase: float  # [m]
     max_steer: float  # [rad]
     steer_rate: float  # [rad/s]
-    max_accel: float  # [m/s^2]
+    max_accel: float  # traction limit [m/s^2]
     max_brake: float  # [m/s^2]
+    handbrake_decel: float  # [m/s^2], placeholder until tire slip exists
+    max_lateral_accel: float  # grip limit in corners [m/s^2]
     drag_coeff: float  # [1/m], drag deceleration = drag_coeff * v^2
     rolling_resistance: float  # [m/s^2]
 
 
 _CAR_KEYS = (
     "name",
+    "mass_kg",
+    "max_power_kw",
     "wheelbase_m",
     "max_steer_deg",
     "steer_rate_deg_s",
     "max_accel_m_s2",
     "max_brake_m_s2",
+    "handbrake_decel_m_s2",
+    "max_lateral_accel_m_s2",
     "drag_coeff_per_m",
     "rolling_resistance_m_s2",
 )
@@ -65,26 +73,39 @@ def load_car(path: str | Path) -> CarParams:
 
     params = CarParams(
         name=str(data["name"]),
+        mass=float(data["mass_kg"]),
+        max_power=float(data["max_power_kw"]) * 1000.0,
         wheelbase=float(data["wheelbase_m"]),
         max_steer=math.radians(float(data["max_steer_deg"])),
         steer_rate=math.radians(float(data["steer_rate_deg_s"])),
         max_accel=float(data["max_accel_m_s2"]),
         max_brake=float(data["max_brake_m_s2"]),
+        handbrake_decel=float(data["handbrake_decel_m_s2"]),
+        max_lateral_accel=float(data["max_lateral_accel_m_s2"]),
         drag_coeff=float(data["drag_coeff_per_m"]),
         rolling_resistance=float(data["rolling_resistance_m_s2"]),
     )
 
     positive = {
+        "mass_kg": params.mass,
+        "max_power_kw": params.max_power,
         "wheelbase_m": params.wheelbase,
         "max_steer_deg": params.max_steer,
         "steer_rate_deg_s": params.steer_rate,
         "max_accel_m_s2": params.max_accel,
         "max_brake_m_s2": params.max_brake,
+        "max_lateral_accel_m_s2": params.max_lateral_accel,
     }
     bad = [k for k, v in positive.items() if not v > 0]
     if bad:
         raise ConfigError(f"{path}: values must be positive: {bad}")
-    if params.drag_coeff < 0 or params.rolling_resistance < 0:
-        raise ConfigError(f"{path}: drag and rolling resistance must not be negative")
+    non_negative = {
+        "handbrake_decel_m_s2": params.handbrake_decel,
+        "drag_coeff_per_m": params.drag_coeff,
+        "rolling_resistance_m_s2": params.rolling_resistance,
+    }
+    bad = [k for k, v in non_negative.items() if v < 0]
+    if bad:
+        raise ConfigError(f"{path}: values must not be negative: {bad}")
 
     return params

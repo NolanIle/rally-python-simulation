@@ -2,10 +2,14 @@
 # Every value is marked with its source or as an estimate.
 # TODO: Checkupon the current values
 name: Lancia Delta S4
+mass_kg: 1050                  # estimate, including crew and fuel
+max_power_kw: 360              # estimate, rally trim usually quoted around 480 hp
 wheelbase_m: 2.44              # approximate published figure, verify
 max_steer_deg: 30              # estimate
 steer_rate_deg_s: 360          # estimate: how fast the front wheels can turn
-max_accel_m_s2: 6.0            # estimate, placeholder model only
-max_brake_m_s2: 9.0            # estimate, about 0.9 g
-drag_coeff_per_m: 0.0019       # tuned so top speed is about 200 km/h
+max_accel_m_s2: 8.5            # traction limit, estimate (4WD, good surface)
+max_brake_m_s2: 8.0            # estimate, about 0.8 g
+handbrake_decel_m_s2: 3.0      # placeholder until the tire model exists
+max_lateral_accel_m_s2: 7.5    # cornering grip, estimate for gravel (~0.75 g)
+drag_coeff_per_m: 0.0019       # gives a top speed of roughly 200 km/h with this power
 rolling_resistance_m_s2: 0.15  # estimate

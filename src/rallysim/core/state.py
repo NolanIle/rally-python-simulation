@@ -22,8 +22,9 @@ COMMON_STATE_SIZE = 5
 STEER_IN = 0  # steering command, -1 (full right) .. 1 (full left)
 THROTTLE_IN = 1  # 0 .. 1
 BRAKE_IN = 2  # 0 .. 1
+HANDBRAKE_IN = 3  # 0 .. 1
 
-INPUT_SIZE = 3
+INPUT_SIZE = 4
 
 
 def make_state(n_cars: int, state_size: int = COMMON_STATE_SIZE) -> np.ndarray:
