@@ -24,3 +24,6 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[project.scripts]
+rally = "rallysim.cli:main"
