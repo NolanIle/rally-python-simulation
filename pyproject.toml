@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rallysim"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26",
     "pyyaml>=6.0",
@@ -20,10 +20,11 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:launch_testing -p no:launch_testing_ros"
 
 [project.scripts]
 rally = "rallysim.cli:main"
