@@ -32,6 +32,8 @@ class CarParams:
     max_lateral_accel: float  # grip limit in corners [m/s^2]
     drag_coeff: float  # [1/m], drag deceleration = drag_coeff * v^2
     rolling_resistance: float  # [m/s^2]
+    max_reverse_speed: float  # [m/s], reverse is capped here
+    reverse_accel_fraction: float  # 0..1, reverse acceleration as a share of max_accel
 
 
 _CAR_KEYS = (
@@ -47,6 +49,8 @@ _CAR_KEYS = (
     "max_lateral_accel_m_s2",
     "drag_coeff_per_m",
     "rolling_resistance_m_s2",
+    "max_reverse_speed_m_s",
+    "reverse_accel_fraction",
 )
 
 
@@ -84,6 +88,8 @@ def load_car(path: str | Path) -> CarParams:
         max_lateral_accel=float(data["max_lateral_accel_m_s2"]),
         drag_coeff=float(data["drag_coeff_per_m"]),
         rolling_resistance=float(data["rolling_resistance_m_s2"]),
+        max_reverse_speed=float(data["max_reverse_speed_m_s"]),
+        reverse_accel_fraction=float(data["reverse_accel_fraction"]),
     )
 
     positive = {
@@ -95,10 +101,14 @@ def load_car(path: str | Path) -> CarParams:
         "max_accel_m_s2": params.max_accel,
         "max_brake_m_s2": params.max_brake,
         "max_lateral_accel_m_s2": params.max_lateral_accel,
+        "max_reverse_speed_m_s": params.max_reverse_speed,
+        "reverse_accel_fraction": params.reverse_accel_fraction,
     }
     bad = [k for k, v in positive.items() if not v > 0]
     if bad:
         raise ConfigError(f"{path}: values must be positive: {bad}")
+    if params.reverse_accel_fraction > 1.0:
+        raise ConfigError(f"{path}: reverse_accel_fraction must be <= 1")
     non_negative = {
         "handbrake_decel_m_s2": params.handbrake_decel,
         "drag_coeff_per_m": params.drag_coeff,

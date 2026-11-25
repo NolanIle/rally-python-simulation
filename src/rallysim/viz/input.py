@@ -20,7 +20,13 @@ class GamepadMapping:
 
 
 class InputHandler:
-    KEY_STEER_RATE = 3.0  # how fast keyboard steering ramps [1/s]
+    # A key is either down or up, so the command is ramped to stand in for how
+    # far a stick or pedal has been pushed. Steering is ramped at 12/s, which
+    # reaches full lock in 83 ms: the same time the car's own steering actuator
+    # takes at steer_rate_deg_s = 360. Anything slower makes the keyboard, not
+    # the car, the thing limiting turn-in -- the previous 3.0 took 333 ms and
+    # felt unresponsive at speed.
+    KEY_STEER_RATE = 12.0  # how fast keyboard steering ramps [1/s]
     KEY_PEDAL_RATE = 4.0  # how fast keyboard pedals ramp [1/s]
 
     def __init__(self, mapping: GamepadMapping | None = None) -> None:
@@ -49,7 +55,12 @@ class InputHandler:
         else:
             values = self._read_keyboard(dt)
         inputs = make_inputs(1)
-        inputs[0, STEER_IN], inputs[0, THROTTLE_IN], inputs[0, BRAKE_IN], inputs[0, HANDBRAKE_IN] = values
+        (
+            inputs[0, STEER_IN],
+            inputs[0, THROTTLE_IN],
+            inputs[0, BRAKE_IN],
+            inputs[0, HANDBRAKE_IN],
+        ) = values
         return inputs
 
     def _connect(self, device_index: int) -> None:
@@ -101,9 +112,7 @@ class InputHandler:
         brake = float(keys[pygame.K_DOWN] or keys[pygame.K_s])
         handbrake = float(keys[pygame.K_SPACE])
         targets = np.array([steer, throttle, brake, handbrake])
-        rates = (
-                np.array([self.KEY_STEER_RATE, self.KEY_PEDAL_RATE, self.KEY_PEDAL_RATE, 20.0]) * dt
-        )
+        rates = np.array([self.KEY_STEER_RATE, self.KEY_PEDAL_RATE, self.KEY_PEDAL_RATE, 20.0]) * dt
         self._keys += np.clip(targets - self._keys, -rates, rates)
         return (
             float(self._keys[0]),
