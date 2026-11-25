@@ -12,17 +12,27 @@ before and after a change and diff the output:
 The point of the steering tables is that yaw rate must *increase* with
 steering input at every speed. Identical values across a row mean the input
 is being ignored.
+
+Pass --model to compare the two vehicle models on the same numbers:
+
+    env -u PYTHONPATH uv run python scripts/handling_probe.py --model kinematic
+    env -u PYTHONPATH uv run python scripts/handling_probe.py --model dynamic
+
+The manoeuvre sections (step steer, handbrake turn, lift-off, blend band) only
+mean anything for the dynamic model, since the kinematic one cannot slide, so
+they are skipped for it.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
-from rallysim.core.config import CarParams, load_car
+from rallysim.core.config import MODELS, CarParams, load_car, load_sim
 from rallysim.core.state import (
     BRAKE_IN,
     HANDBRAKE_IN,
@@ -32,13 +42,16 @@ from rallysim.core.state import (
     X,
     Y,
     YAW,
+    YAW_RATE,
+    body_slip,
     make_inputs,
     make_state,
 )
-from rallysim.physics.kinematic import KinematicBicycle
+from rallysim.physics.registry import build_model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CAR = REPO_ROOT / "config" / "cars" / "lancia_delta_s4.yaml"
+DEFAULT_SIM = REPO_ROOT / "config" / "sim" / "default.yaml"
 DT = 1.0 / 200.0
 
 SPEEDS_KMH = (30.0, 60.0, 100.0, 140.0)
@@ -90,6 +103,35 @@ def yaw_rate_at(model, kmh, steer):
     after = model.step(state, inputs, DT)
     d_yaw = np.arctan2(np.sin(after[0, YAW] - state[0, YAW]), np.cos(after[0, YAW] - state[0, YAW]))
     return np.degrees(d_yaw / DT), after[0, SPEED]
+
+
+def manoeuvre(model, kmh, controls, seconds):
+    """Drive a time-varying manoeuvre and report what the car did.
+
+    `controls` maps elapsed time to (steer, throttle, brake, handbrake), so a
+    handbrake tap or a countersteer can be scripted. Returns peak body slip and
+    peak yaw rate in degrees, plus the final state.
+    """
+    state = state_at_speed(model, kmh)
+    peak_slip = 0.0
+    peak_yaw = 0.0
+    steps = int(round(seconds / DT))
+    for i in range(steps):
+        steer, throttle, brake, handbrake = controls(i * DT)
+        inputs = make_inputs(1)
+        inputs[:, STEER_IN] = steer
+        inputs[:, THROTTLE_IN] = throttle
+        inputs[:, BRAKE_IN] = brake
+        inputs[:, HANDBRAKE_IN] = handbrake
+        state = model.step(state, inputs, DT)
+        peak_slip = max(peak_slip, abs(np.degrees(body_slip(state[0]))))
+        if model.state_size > YAW_RATE:
+            peak_yaw = max(peak_yaw, abs(np.degrees(state[0, YAW_RATE])))
+    return state, peak_slip, peak_yaw
+
+
+def final_slip(state):
+    return abs(np.degrees(body_slip(state[0])))
 
 
 def section(title):
@@ -266,43 +308,188 @@ def probe_slip(model):
         print("  -> kinematic model, as documented. Drift needs the dynamic model.")
 
 
+def probe_step_steer(model):
+    section("8. Step steer: how fast the car responds, and how far it slides")
+    print("  speed   peak yaw   peak slip   settled slip")
+    print("  " + "-" * 48)
+    for kmh in SPEEDS_KMH:
+        state, peak_slip, peak_yaw = manoeuvre(
+            model, kmh, lambda t: (1.0, 0.3, 0.0, 0.0), seconds=3.0
+        )
+        print(f"  {kmh:5.0f}  {peak_yaw:8.2f}d/s  {peak_slip:8.2f}d  {final_slip(state):11.2f}d")
+    print("  Slip stays at 0 for the kinematic model: it cannot slide at all.")
+
+
+def probe_handbrake_turn(model):
+    section("9. Handbrake turn: tap the handbrake, then catch the slide")
+    print("  Tap for 0.4 s while turning, then straighten up and feed in power.")
+    print()
+    print("  speed   peak yaw   peak slip   slip after 4 s   verdict")
+    print("  " + "-" * 62)
+
+    def controls(t):
+        if t < 0.4:
+            return (0.6, 0.3, 0.0, 1.0)  # turn in with the handbrake
+        return (0.0, 0.3, 0.0, 0.0)  # straighten and drive out
+
+    for kmh in (60.0, 100.0):
+        state, peak_slip, peak_yaw = manoeuvre(model, kmh, controls, seconds=4.4)
+        settled = final_slip(state)
+        verdict = "recovered" if settled < 5.0 else "STILL SLIDING -- tune the tyres"
+        print(f"  {kmh:5.0f}  {peak_yaw:8.2f}d/s  {peak_slip:8.2f}d  {settled:13.2f}d   {verdict}")
+
+
+def probe_throttle_off_oversteer(model):
+    section("10. Lift-off oversteer: does releasing the throttle rotate the car?")
+
+    def held(t):
+        return (0.7, 0.4, 0.0, 0.0)
+
+    def lifted(t):
+        return (0.7, 0.4 if t < 1.5 else 0.0, 0.0, 0.0)
+
+    held_state, _, _ = manoeuvre(model, 100.0, held, seconds=3.0)
+    lift_state, _, _ = manoeuvre(model, 100.0, lifted, seconds=3.0)
+    print(f"  holding throttle : slip {final_slip(held_state):6.2f} deg")
+    print(f"  lifting mid-corner: slip {final_slip(lift_state):6.2f} deg")
+    print("  More slip after lifting means weight moved off the rear axle.")
+
+
+def probe_blend_band(model):
+    section("11. Low-speed blend: the handover must not jump")
+    print("  The dynamic model cannot compute slip angles near zero speed, so it")
+    print("  hands over to no-slip behaviour. Look for a smooth yaw rate ramp.")
+    print()
+    print("  speed(km/h)   yaw rate   slip")
+    print("  " + "-" * 40)
+    previous = None
+    worst_jump = 0.0
+    for kmh in np.arange(4.0, 44.0, 4.0):
+        state, _, _ = manoeuvre(model, kmh, lambda t: (1.0, 0.2, 0.0, 0.0), seconds=0.8)
+        rate = np.degrees(state[0, YAW_RATE]) if model.state_size > YAW_RATE else 0.0
+        if previous is not None:
+            worst_jump = max(worst_jump, abs(rate - previous))
+        previous = rate
+        print(f"  {kmh:11.0f}  {rate:8.2f}d/s  {final_slip(state):5.2f}d")
+    print()
+    print(f"  largest step between samples: {worst_jump:.2f} deg/s")
+
+
+def probe_spin_sanity(model):
+    section("12. A spin must end: no rotating or sliding once stopped")
+
+    # Spin the car, brake it to a standstill, then release everything. Holding
+    # the brake would engage reverse, since the brake doubles as reverse gear.
+    def controls(t):
+        if t < 1.0:
+            return (1.0, 0.5, 0.0, 1.0)  # spin it
+        if t < 2.2:
+            # Just enough to stop; holding longer would pull away in reverse.
+            return (0.0, 0.0, 1.0, 0.0)
+        return (0.0, 0.0, 0.0, 0.0)  # and sit there
+
+    state, _, _ = manoeuvre(model, 100.0, controls, seconds=8.0)
+    rate = np.degrees(state[0, YAW_RATE]) if model.state_size > YAW_RATE else 0.0
+    print("  spun for 1 s, braked to a stop, then left alone:")
+    print(f"    speed    {state[0, SPEED] * 3.6:8.3f} km/h")
+    print(f"    yaw rate {rate:8.4f} deg/s")
+    print(f"    slip     {final_slip(state):8.4f} deg")
+    ok = abs(rate) < 1.0 and final_slip(state) < 1.0
+    print(f"  {'PASS' if ok else 'FAIL -- the car is still rotating or sliding'}")
+    return ok
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--car", type=Path, default=DEFAULT_CAR, help="car config file")
+    parser.add_argument("--sim", type=Path, default=DEFAULT_SIM, help="simulation settings file")
+    parser.add_argument(
+        "--model", choices=MODELS, default=None, help="override the model in the sim file"
+    )
     args = parser.parse_args(argv)
 
     params: CarParams = load_car(args.car)
-    model = KinematicBicycle(params)
+    sim = load_sim(args.sim)
+    if args.model is not None:
+        sim = replace(sim, model=args.model)
+    model = build_model(sim, params)
+    dynamic = model.state_size > YAW_RATE
 
-    print(f"car:  {params.name}")
-    print(f"file: {args.car}")
+    print(f"car:   {params.name}")
+    print(f"file:  {args.car}")
+    print(f"model: {sim.model}")
     print(
         f"key params: max_steer={np.degrees(params.max_steer):.0f} deg, "
         f"steer_rate={np.degrees(params.steer_rate):.0f} deg/s, "
-        f"max_lateral_accel={params.max_lateral_accel:.1f} m/s^2, "
         f"wheelbase={params.wheelbase:.2f} m"
     )
+    if dynamic:
+        print(
+            f"            tyre friction front={params.tyre_front.friction:.2f} "
+            f"rear={params.tyre_rear.friction:.2f}, "
+            f"curvature={params.tyre_front.curvature:.2f} (the drift knob), "
+            f"yaw inertia={params.yaw_inertia:.0f} kg m^2"
+        )
+        print(f"            blend band {sim.blend_speed_low:.1f}-{sim.blend_speed_high:.1f} m/s")
+    else:
+        print(f"            max_lateral_accel={params.max_lateral_accel:.1f} m/s^2")
 
-    spread = probe_steering_response(model)
-    probe_steering_authority(model)
-    grip_ok, grip_used = probe_grip_limit(model)
+    # Tables 1-3 ask "how much of the grip limit does the steering reach", which
+    # is the kinematic model's defining question. A sliding car has no single
+    # steady-state yaw rate for a given input, so those numbers are not
+    # meaningful for the dynamic model -- the manoeuvre sections below replace
+    # them.
+    spread = float("nan")
+    grip_ok, grip_used = True, 1.0
+    if not dynamic:
+        spread = probe_steering_response(model)
+        probe_steering_authority(model)
+        grip_ok, grip_used = probe_grip_limit(model)
     probe_performance(model)
     probe_reverse(model)
     probe_timestep(model)
     probe_slip(model)
+    probe_step_steer(model)
+    spin_ok = True
+    if dynamic:
+        probe_handbrake_turn(model)
+        probe_throttle_off_oversteer(model)
+        probe_blend_band(model)
+        spin_ok = probe_spin_sanity(model)
 
     section("Summary")
-    print(
-        f"  input range usable (want > 1.10x):  {spread:.2f}x  "
-        f"{'PASS' if spread > 1.10 else 'FAIL -- steering feels on/off'}"
-    )
-    print(
-        f"  grip actually used (want > 90%):     {grip_used:.0%}   "
-        f"{'PASS' if grip_used > 0.9 else 'FAIL -- something is over-limiting the steering'}"
-    )
-    print(
-        f"  grip limit respected:               {'PASS' if grip_ok else 'FAIL -- exceeds the limit'}"
-    )
+    if dynamic:
+        # What matters for the dynamic model is that it beats the ceiling the
+        # kinematic model could not, and that slides end rather than compound.
+        recovered, _, handbrake_yaw = manoeuvre(
+            model,
+            100.0,
+            lambda t: (0.6, 0.3, 0.0, 1.0) if t < 0.4 else (0.0, 0.3, 0.0, 0.0),
+            seconds=4.4,
+        )
+        settled = final_slip(recovered)
+        print(
+            f"  beats kinematic yaw ceiling (~20):  {handbrake_yaw:.0f} deg/s   "
+            f"{'PASS' if handbrake_yaw > 30.0 else 'FAIL -- no better than no-slip'}"
+        )
+        print(
+            f"  slide recovers (want < 5 deg):      {settled:.1f} deg   "
+            f"{'PASS' if settled < 5.0 else 'FAIL -- tune the tyres'}"
+        )
+        print(f"  spin ends once stopped:             {'PASS' if spin_ok else 'FAIL'}")
+    else:
+        print(
+            f"  input range usable (want > 1.10x):  {spread:.2f}x  "
+            f"{'PASS' if spread > 1.10 else 'FAIL -- steering feels on/off'}"
+        )
+        print(
+            f"  grip actually used (want > 90%):     {grip_used:.0%}   "
+            f"{'PASS' if grip_used > 0.9 else 'FAIL -- something is over-limiting the steering'}"
+        )
+        print(
+            f"  grip limit respected:               "
+            f"{'PASS' if grip_ok else 'FAIL -- exceeds the limit'}"
+        )
     return 0
 
 
