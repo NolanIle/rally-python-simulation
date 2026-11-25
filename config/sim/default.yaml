@@ -1,0 +1,18 @@
+# How to simulate, as opposed to what car to simulate.
+
+# "dynamic"   - tyre slip angles and force curves. The car can slide, rotate
+#               faster than its path curves, and be caught on the throttle.
+# "kinematic" - no tyres, no slip: the car always travels exactly where it
+#               points. Simpler and always stable, but cannot drift.
+model: dynamic
+
+physics_dt_s: 0.005            # 200 Hz, fixed step and independent of frame rate
+
+# The dynamic model gets slip angles by dividing by speed, so it is meaningless
+# at walking pace: at 0.1 m/s it computes 83 deg of slip and thinks the tyres
+# are saturated. Below blend_speed_low it behaves kinematically instead, and
+# blends across to full dynamics by blend_speed_high. The band is deliberately
+# low (11-22 km/h) but hairpins live right there, so widen it if the handover
+# is noticeable.
+blend_speed_low_m_s: 3.0
+blend_speed_high_m_s: 6.0

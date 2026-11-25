@@ -1,0 +1,9 @@
+# The old no-slip model, kept for comparison:
+#   rally sandbox --sim config/sim/kinematic.yaml
+# The blend speeds are unused by this model but still required.
+model: kinematic
+
+physics_dt_s: 0.005
+
+blend_speed_low_m_s: 3.0
+blend_speed_high_m_s: 6.0
