@@ -11,6 +11,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sandbox = sub.add_parser("sandbox", help="drive the car yourself on a test road")
     sandbox.add_argument("--car", type=Path, default=None, help="car config file")
+    sandbox.add_argument("--sim", type=Path, default=None, help="simulation settings file")
 
     sub.add_parser("gamepad-test", help="show gamepad axis values")
 
@@ -23,7 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sandbox":
         from rallysim.apps.sandbox import run
 
-        run(car=args.car)
+        run(car=args.car, sim=args.sim)
     elif args.command == "gamepad-test":
         from rallysim.apps.gamepad_test import run
 

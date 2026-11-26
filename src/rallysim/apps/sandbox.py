@@ -12,10 +12,22 @@ from pathlib import Path
 import numpy as np
 import pygame
 
-from rallysim.core.config import load_car
-from rallysim.core.state import BRAKE_IN, SPEED, STEER, THROTTLE_IN, X, Y, YAW, HANDBRAKE_IN, make_state
-from rallysim.physics.kinematic import KinematicBicycle
+from rallysim.core.config import load_car, load_sim
+from rallysim.core.state import (
+    BRAKE_IN,
+    HANDBRAKE_IN,
+    SPEED,
+    STEER,
+    THROTTLE_IN,
+    X,
+    Y,
+    YAW,
+    YAW_RATE,
+    body_slip,
+    make_state,
+)
 from rallysim.physics.model import VehicleModel
+from rallysim.physics.registry import build_model
 from rallysim.viz.camera import Camera
 from rallysim.viz.input import InputHandler
 from rallysim.viz.renderer import Renderer
@@ -25,8 +37,8 @@ from rallysim.world.test_road import make_test_road, road_edges
 # src/rallysim/apps/sandbox.py -> repository root is three levels up
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CAR = ROOT / "config" / "cars" / "lancia_delta_s4.yaml"
+DEFAULT_SIM = ROOT / "config" / "sim" / "default.yaml"
 
-PHYSICS_DT = 1.0 / 200.0  # fixed physics step [s]
 MAX_STEPS_PER_FRAME = 20  # avoid a spiral of death if a frame is very slow
 SCREEN_SIZE = (1280, 800)
 ROAD_WIDTH = 7.0  # [m]
@@ -40,9 +52,11 @@ def initial_state(model: VehicleModel, centreline: np.ndarray) -> np.ndarray:
     return state
 
 
-def run(car: Path | None = None) -> None:
+def run(car: Path | None = None, sim: Path | None = None) -> None:
     params = load_car(car or DEFAULT_CAR)
-    model = KinematicBicycle(params)
+    sim_params = load_sim(sim or DEFAULT_SIM)
+    model = build_model(sim_params, params)
+    physics_dt = sim_params.physics_dt
     centreline = make_test_road()
     left, right = road_edges(centreline, ROAD_WIDTH)
 
@@ -76,16 +90,20 @@ def run(car: Path | None = None) -> None:
                     camera.snap(state[0, X], state[0, Y])
                     sim_time = 0.0
             elif event.type == pygame.MOUSEWHEEL:
-                camera.zoom(1.1 ** event.y)
+                camera.zoom(1.1**event.y)
 
-        # Fixed-step physics, decoupled from the frame rate.
+        # Physics runs at a fixed step so it behaves the same at any frame rate.
+        # A long frame (a stall, or dragging the window) is clamped rather than
+        # simulated in full, and if even that needs more steps than the budget
+        # the leftover time is dropped: the clock slips, but the loop recovers
+        # instead of falling further behind every frame.
         inputs = controls.read(frame_dt)
         accumulator += min(frame_dt, 0.25)
         steps = 0
-        while accumulator >= PHYSICS_DT and steps < MAX_STEPS_PER_FRAME:
-            state = model.step(state, inputs, PHYSICS_DT)
-            accumulator -= PHYSICS_DT
-            sim_time += PHYSICS_DT
+        while accumulator >= physics_dt and steps < MAX_STEPS_PER_FRAME:
+            state = model.step(state, inputs, physics_dt)
+            accumulator -= physics_dt
+            sim_time += physics_dt
             steps += 1
         if steps == MAX_STEPS_PER_FRAME:
             accumulator = 0.0
@@ -94,19 +112,26 @@ def run(car: Path | None = None) -> None:
         renderer.draw_background()
         renderer.draw_road(left, right, centreline)
         renderer.draw_cars(state)
-        telemetry.draw(
-            screen,
-            [
-                ("input", controls.source),
-                ("speed", f"{state[0, SPEED] * 3.6:6.1f} km/h"),
-                ("steer", f"{math.degrees(state[0, STEER]):6.1f} deg"),
-                ("throttle", f"{inputs[0, THROTTLE_IN]:6.2f}"),
-                ("brake", f"{inputs[0, BRAKE_IN]:6.2f}"),
-                ("handbrake", f"{inputs[0, HANDBRAKE_IN]:6.2f}"),
-                ("time", f"{sim_time:6.1f} s"),
-                ("fps", f"{clock.get_fps():6.1f}"),
-            ],
-        )
+        lines = [
+            ("input", controls.source),
+            ("model", sim_params.model),
+            ("speed", f"{state[0, SPEED] * 3.6:6.1f} km/h"),
+            ("steer", f"{math.degrees(state[0, STEER]):6.1f} deg"),
+            ("throttle", f"{inputs[0, THROTTLE_IN]:6.2f}"),
+            ("brake", f"{inputs[0, BRAKE_IN]:6.2f}"),
+            ("handbrake", f"{inputs[0, HANDBRAKE_IN]:6.2f}"),
+        ]
+        # Only models that let the car slide carry these, so show them when
+        # present rather than assuming the state layout.
+        if model.state_size > YAW_RATE:
+            lines.extend(
+                [
+                    ("slip", f"{math.degrees(body_slip(state[0])):6.1f} deg"),
+                    ("yaw rate", f"{math.degrees(state[0, YAW_RATE]):6.1f} deg/s"),
+                ]
+            )
+        lines.extend([("time", f"{sim_time:6.1f} s"), ("fps", f"{clock.get_fps():6.1f}")])
+        telemetry.draw(screen, lines)
         pygame.display.flip()
 
     pygame.quit()

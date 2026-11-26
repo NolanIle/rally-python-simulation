@@ -18,7 +18,15 @@ STEER = 4  # front wheel steering angle [rad]
 
 COMMON_STATE_SIZE = 5
 
-# Driver inputs
+# Extra fields for models that let the car slide. SPEED above is the
+# longitudinal (body-frame) speed in those models, so everything that only
+# reads the common fields keeps working.
+VY = 5  # lateral velocity, body frame [m/s], positive to the left
+YAW_RATE = 6  # [rad/s], counter-clockwise positive
+
+DYNAMIC_STATE_SIZE = 7
+
+# Driver inputs: a separate index space from the state fields above.
 STEER_IN = 0  # steering command, -1 (full right) .. 1 (full left)
 THROTTLE_IN = 1  # 0 .. 1
 BRAKE_IN = 2  # 0 .. 1
@@ -35,3 +43,14 @@ def make_state(n_cars: int, state_size: int = COMMON_STATE_SIZE) -> np.ndarray:
 def make_inputs(n_cars: int) -> np.ndarray:
     """Return a zeroed input array for n_cars cars."""
     return np.zeros((n_cars, INPUT_SIZE), dtype=np.float64)
+
+
+def body_slip(row: np.ndarray) -> float:
+    """Angle between where one car points and where it is actually going [rad].
+
+    Zero means the car travels exactly along its heading. Models without a VY
+    field cannot slide, so they always report zero.
+    """
+    if row.shape[-1] <= VY:
+        return 0.0
+    return float(np.arctan2(row[VY], abs(row[SPEED])) if abs(row[SPEED]) > 1e-6 else 0.0)

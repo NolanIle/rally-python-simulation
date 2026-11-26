@@ -33,34 +33,6 @@ Dependency versions are pinned in `uv.lock`, so this gives the same environment
 on any machine. There is no need to activate the venv manually; `uv run` handles
 it.
 
-## Important: running alongside ROS 2
-
-**If you have ROS 2 sourced in your shell, prefix every command with
-`env -u PYTHONPATH`.**
-
-```bash
-env -u PYTHONPATH uv run rally sandbox
-```
-
-Sourcing ROS 2 sets `PYTHONPATH` to its own `site-packages`. Python prepends
-`PYTHONPATH` to `sys.path` for *every* interpreter, including one inside a
-virtualenv — so ROS packages leak into this project and pytest tries to load
-ROS's pytest plugins, which fails. `PYTHONPATH` is read before a venv's
-`include-system-site-packages = false` is applied, so there is no venv-level
-setting that prevents this; it has to be cleared per command.
-
-`env -u PYTHONPATH` removes the variable for that one process only. Your shell
-keeps its ROS setup and ROS keeps working normally in the same terminal.
-
-An alias makes it less tedious — add to `~/.bashrc`:
-
-```bash
-alias rallyrun='env -u PYTHONPATH uv run'
-```
-
-Then `rallyrun rally sandbox`, `rallyrun pytest`, and so on. The rest of this
-README writes commands as plain `uv run ...`; add the prefix if ROS is sourced.
-
 ## Running
 
 ### Drive the car

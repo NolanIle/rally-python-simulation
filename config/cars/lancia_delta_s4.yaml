@@ -1,6 +1,12 @@
-# Lancia Delta S4 (Group B) - parameters for the placeholder kinematic model.
+# Lancia Delta S4 (Group B).
 # Every value is marked with its source or as an estimate.
 # TODO: Checkupon the current values
+#
+# Which model reads what:
+#   both      - mass, power, wheelbase, steering, brakes, drag, reverse
+#   kinematic - max_lateral_accel_m_s2 (its only cornering limit)
+#   dynamic   - yaw_inertia, cg_to_front/rear, the whole tyres block
+# Pick the model in config/sim/*.yaml.
 name: Lancia Delta S4
 mass_kg: 1050                  # estimate, including crew and fuel
 max_power_kw: 360              # estimate, rally trim usually quoted around 480 hp
@@ -11,15 +17,61 @@ steer_rate_deg_s: 360          # estimate: how fast the front wheels can turn
 max_accel_m_s2: 8.5            # traction limit, estimate (4WD, good surface)
 max_brake_m_s2: 8.0            # estimate, about 0.8 g
 handbrake_decel_m_s2: 3.0      # placeholder until the tire model exists
-# THE knob for how hard the car corners. At speed the steering always asks for
-# more yaw than the tires can give, so this value alone sets the turn radius:
-# radius = v^2 / max_lateral_accel. At 120 km/h that is 103 m at 1.1 g, 87 m at
-# 1.3 g. Raise it if the car feels too reluctant to turn.
+# KINEMATIC MODEL ONLY. That model has no tyres, so this one value is its whole
+# cornering limit: radius = v^2 / max_lateral_accel, which at 120 km/h is 103 m
+# at 1.1 g. The dynamic model ignores it and uses tyres.*.friction instead, so
+# keep the two roughly in step or the models will feel different.
 #   gravel 0.8-1.0 g (7.8-9.8) | tarmac 1.1-1.4 g (10.8-13.7) | WRC ~1.5 g (14.7)
-max_lateral_accel_m_s2: 11.0   # cornering grip, estimate for tarmac (~1.1 g)
+max_lateral_accel_m_s2: 13.6   # cornering grip, estimate for tarmac (~1.39 g),
+                               # matched to what the dynamic model's tyres achieve
 
 drag_coeff_per_m: 0.0019       # gives a top speed of roughly 200 km/h with this power
 rolling_resistance_m_s2: 0.15  # estimate
 
 max_reverse_speed_m_s: 8.0     # ~29 km/h, estimate
 reverse_accel_fraction: 0.4    # reverse pulls weaker than first gear, estimate
+
+# --- dynamic model only, from here down ---
+
+# Mid-engined, so the weight sits towards the rear: roughly 42/58 front/rear.
+# The two distances are the wheelbase split about the centre of gravity and
+# must add up to wheelbase_m.
+cg_to_front_m: 1.415           # estimate from a 42/58 distribution
+cg_to_rear_m: 1.025            # estimate, = wheelbase - cg_to_front
+
+# How reluctant the car is to rotate about the vertical axis. Low values feel
+# twitchy and spin easily, high values feel reluctant to change direction.
+# m * cg_to_front * cg_to_rear is the usual first approximation.
+yaw_inertia_kg_m2: 1520        # estimate, = 1050 * 1.415 * 1.025
+
+# Tyre force curves, per axle (Pacejka "Magic Formula").
+#   stiffness - how fast force builds with slip. Higher = sharper turn-in.
+#               Tarmac is stiffer than gravel.
+#   shape     - where the force peak sits and how pointy it is.
+#   friction  - peak force as a multiple of the vertical load, i.e. g of grip.
+#               Compare with max_lateral_accel_m_s2 above.
+#   curvature - how much grip is LOST past the peak, and so how slidy the car
+#               is. This is the drift knob: 0.5 loses about a third of peak
+#               force by 30 deg of slip (slidy but catchable), while values
+#               near 1.0 barely fall off and make slides impossible to hold.
+#
+# Front friction slightly below rear gives mild understeer, which is the safe
+# default: the nose washes out before the tail steps out. Lower the rear
+# friction to make the car oversteer.
+# Note that `friction` is not the lateral g the car pulls: the weight sits
+# towards the rear while the front has the longer moment arm, so the front
+# saturates first and the achieved figure comes out above the coefficient.
+# These values measure about 1.39 g, inside the 1.2-1.45 g range quoted for
+# Group B on tarmac. Raising them further made the car harder to place and
+# the scripted lap slower, not quicker.
+tyres:
+  front:
+    stiffness: 10.0            # estimate
+    shape: 1.9                 # estimate
+    friction: 1.35             # estimate, tarmac; above rear to offset the load split
+    curvature: 0.5             # estimate, tuned for catchable slides
+  rear:
+    stiffness: 10.0            # estimate
+    shape: 1.9                 # estimate
+    friction: 1.30             # estimate
+    curvature: 0.5             # estimate

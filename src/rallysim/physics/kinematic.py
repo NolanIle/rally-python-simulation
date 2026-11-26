@@ -1,27 +1,22 @@
 """Grip-limited kinematic bicycle model: no tire slip.
 
-A placeholder that moves believably enough to build the sandbox, input
-and rendering around it. Cornering is limited by lateral grip (the car
-turns less than steered when going too fast: understeer), and
-acceleration is limited by traction at low speed and power at high
-speed. It is replaced by the drift model later, and stays available as
-the simple fallback model.
+The simple fallback model, kept alongside the dynamic one and selected
+with `model: kinematic` in a sim config. Cornering is limited by lateral
+grip (the car turns less than steered when going too fast: understeer),
+and acceleration is limited by traction at low speed and power at high
+speed.
 
-One detail matters for how it feels to drive: the grip limit saturates
-the yaw rate smoothly instead of clipping it. A hard clip makes every
-steering input beyond the limit produce the same yaw rate, which leaves
-the steering dead above about 20 km/h.
+The grip limit saturates the yaw rate smoothly rather than clipping it.
+A hard clip would make every steering input beyond the limit produce the
+same yaw rate, leaving the steering dead above about 20 km/h.
 
-Lateral grip is the only thing limiting how hard the car can turn. At
-speed the steering geometry asks for far more yaw than any tire can
-deliver (full lock at 120 km/h would need 27 g), so cornering is always
-grip-bound and the resulting radius comes straight from
-`max_lateral_accel`: about 103 m at 120 km/h for 1.1 g. That is correct
-physics, not sluggishness -- if the car feels too slow to turn, raise
-`max_lateral_accel_m_s2`, because nothing else is holding it back.
+Grip is the only thing limiting cornering here: at speed the steering
+geometry asks for far more yaw than any tyre can deliver (full lock at
+120 km/h would need 27 g), so the radius comes straight from
+`max_lateral_accel` -- about 103 m at 120 km/h for 1.1 g.
 
-The car has no slip angle: it always travels exactly where it points.
-Drifting needs the dynamic model.
+The car has no slip angle: it always travels exactly where it points, so
+it cannot drift. That needs `dynamic.py`.
 """
 
 from __future__ import annotations
@@ -61,9 +56,8 @@ class KinematicBicycle:
         v = state[:, SPEED]
         speed = np.abs(v)
 
-        # Steering moves towards the commanded angle at a limited rate. Full
-        # lock is available at any speed; the grip limit below decides how much
-        # of it the car can actually use.
+        # Full lock is available at any speed; the grip limit below decides how
+        # much of it the car can use. The dynamic model caps the angle instead.
         target = steer_cmd * p.max_steer
         max_change = p.steer_rate * dt
         steer = state[:, STEER] + np.clip(target - state[:, STEER], -max_change, max_change)
@@ -74,7 +68,6 @@ class KinematicBicycle:
         stopped = speed < REVERSE_ENGAGE_SPEED
         in_reverse = (v < 0.0) | (stopped & (brake > 0.0) & (throttle <= 0.0))
 
-        # Direction of travel the drivetrain is working in: +1 forward, -1 back.
         direction = np.where(in_reverse, -1.0, 1.0)
 
         # Engine: traction-limited at low speed, power-limited at high speed.
@@ -86,7 +79,8 @@ class KinematicBicycle:
             throttle * engine_accel,
         )
 
-        # Resistance always opposes travel, so it acts along -direction.
+        # Resistance opposes the direction the car is actually moving, which is
+        # not always the direction the drivetrain is pushing.
         resistance = p.rolling_resistance + p.drag_coeff * speed * speed
         # Whichever pedal is not driving acts as the brake: the throttle stops a
         # reversing car, the brake stops a forward one.
@@ -99,19 +93,17 @@ class KinematicBicycle:
         accel = np.where(stopped & (speed < 1e-9), direction * drive, accel)
         v_new = v + accel * dt
 
-        # Resistance must not push the car past zero into the other direction,
-        # and reverse is capped.
+        # Coasting must stop at zero rather than reversing through it.
         crossed_zero = (v * v_new) < 0.0
         coasting_to_rest = crossed_zero & (drive <= 1e-12)
         v_new = np.where(coasting_to_rest, 0.0, v_new)
         v_new = np.where(in_reverse, np.maximum(v_new, -p.max_reverse_speed), v_new)
         v_new = np.where(~in_reverse, np.maximum(v_new, 0.0), v_new)
 
-        # Cornering. The wheels ask for a yaw rate; lateral grip limits how much
-        # of it the car can actually take. Saturate smoothly rather than clipping:
-        # a hard clip makes every steering input above the limit produce the same
-        # yaw rate, so the steering goes dead. This keeps the response monotonic
-        # in steering input while staying strictly under the grip limit.
+        # The wheels ask for a yaw rate and grip limits what the car can take.
+        # Saturating smoothly keeps the response monotonic in steering input
+        # while staying strictly under the limit; see the module docstring for
+        # why a hard clip does not.
         speed_new = np.abs(v_new)
         asked = v_new / p.wheelbase * np.tan(steer)
         max_yaw_rate = p.max_lateral_accel / np.maximum(speed_new, 0.1)

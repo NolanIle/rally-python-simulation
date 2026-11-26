@@ -21,11 +21,9 @@ class GamepadMapping:
 
 class InputHandler:
     # A key is either down or up, so the command is ramped to stand in for how
-    # far a stick or pedal has been pushed. Steering is ramped at 12/s, which
-    # reaches full lock in 83 ms: the same time the car's own steering actuator
-    # takes at steer_rate_deg_s = 360. Anything slower makes the keyboard, not
-    # the car, the thing limiting turn-in -- the previous 3.0 took 333 ms and
-    # felt unresponsive at speed.
+    # far a stick or pedal has been pushed. Steering reaches full lock in 83 ms,
+    # matching the car's own actuator at steer_rate_deg_s = 360; ramping slower
+    # than that makes the keyboard, not the car, the thing limiting turn-in.
     KEY_STEER_RATE = 12.0  # how fast keyboard steering ramps [1/s]
     KEY_PEDAL_RATE = 4.0  # how fast keyboard pedals ramp [1/s]
 
