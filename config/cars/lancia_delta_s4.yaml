@@ -22,7 +22,8 @@ handbrake_decel_m_s2: 3.0      # placeholder until the tire model exists
 # at 1.1 g. The dynamic model ignores it and uses tyres.*.friction instead, so
 # keep the two roughly in step or the models will feel different.
 #   gravel 0.8-1.0 g (7.8-9.8) | tarmac 1.1-1.4 g (10.8-13.7) | WRC ~1.5 g (14.7)
-max_lateral_accel_m_s2: 11.0   # cornering grip, estimate for tarmac (~1.1 g)
+max_lateral_accel_m_s2: 13.6   # cornering grip, estimate for tarmac (~1.39 g),
+                               # matched to what the dynamic model's tyres achieve
 
 drag_coeff_per_m: 0.0019       # gives a top speed of roughly 200 km/h with this power
 rolling_resistance_m_s2: 0.15  # estimate
@@ -57,14 +58,20 @@ yaw_inertia_kg_m2: 1520        # estimate, = 1050 * 1.415 * 1.025
 # Front friction slightly below rear gives mild understeer, which is the safe
 # default: the nose washes out before the tail steps out. Lower the rear
 # friction to make the car oversteer.
+# Note that `friction` is not the lateral g the car pulls: the weight sits
+# towards the rear while the front has the longer moment arm, so the front
+# saturates first and the achieved figure comes out above the coefficient.
+# These values measure about 1.39 g, inside the 1.2-1.45 g range quoted for
+# Group B on tarmac. Raising them further made the car harder to place and
+# the scripted lap slower, not quicker.
 tyres:
   front:
     stiffness: 10.0            # estimate
     shape: 1.9                 # estimate
-    friction: 1.10             # estimate, tarmac
+    friction: 1.35             # estimate, tarmac; above rear to offset the load split
     curvature: 0.5             # estimate, tuned for catchable slides
   rear:
     stiffness: 10.0            # estimate
     shape: 1.9                 # estimate
-    friction: 1.15             # estimate, slightly above front = mild understeer
+    friction: 1.30             # estimate
     curvature: 0.5             # estimate

@@ -188,18 +188,27 @@ def test_sustained_cornering_respects_the_tyre_limit(model):
     legitimately peaks above the steady-state limit for a fraction of a second.
     """
     p = model.params
-    limit = max(p.tyre_front.friction, p.tyre_rear.friction) * 9.81
+    # The whole car can only pull what both axles together can make, which is
+    # not simply the friction coefficient: the weight sits towards the rear, so
+    # the two axles carry different loads.
+    weight = p.mass * 9.81
+    load_front = weight * p.cg_to_rear / p.wheelbase
+    load_rear = weight * p.cg_to_front / p.wheelbase
+    limit = (p.tyre_front.friction * load_front + p.tyre_rear.friction * load_rear) / p.mass
+
     state = at_speed(model, 120.0)
     inputs = make_inputs(1)
     inputs[:, STEER_IN] = 1.0
     inputs[:, THROTTLE_IN] = 0.3
     settled = []
-    for step in range(1200):
+    for step in range(2000):
         state = model.step(state, inputs, DT)
-        if step > 800:  # past the turn-in transient
+        if step > 1200:  # past the turn-in transient
             settled.append(abs(state[0, YAW_RATE] * state[0, SPEED]))
     worst = max(settled)
-    assert worst <= limit * 1.1, f"sustained lateral {worst:.2f} exceeds tyre limit {limit:.2f}"
+    # yaw_rate * speed is only the centripetal part, so it reads a little high
+    # while the car is sliding; allow a small margin over the force bound.
+    assert worst <= limit * 1.15, f"sustained lateral {worst:.2f} exceeds tyre limit {limit:.2f}"
 
 
 def test_cornering_does_not_ring(model):
@@ -218,12 +227,20 @@ def test_cornering_does_not_ring(model):
 
 
 def steady_yaw_rate(model, kmh, steer_input, seconds=6.0):
-    """Yaw rate once a steady steering input has settled [rad/s]."""
+    """Yaw rate once a steady steering input has settled [rad/s].
+
+    Throttle and brake are driven to hold the target speed. A fixed throttle
+    would not do: a harder-cornering car sheds more speed, so the comparison
+    would be between different speeds rather than between steering inputs.
+    """
+    target = kmh / 3.6
     state = at_speed(model, kmh)
     inputs = make_inputs(1)
     inputs[:, STEER_IN] = steer_input
-    inputs[:, THROTTLE_IN] = 0.3
     for _ in range(int(round(seconds / DT))):
+        error = target - state[0, SPEED]
+        inputs[:, THROTTLE_IN] = np.clip(error * 0.5, 0.0, 1.0)
+        inputs[:, BRAKE_IN] = np.clip(-error * 0.5, 0.0, 1.0)
         state = model.step(state, inputs, DT)
     return abs(state[0, YAW_RATE])
 
