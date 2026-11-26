@@ -4,9 +4,9 @@
 Drives the model headlessly with scripted inputs and prints tables. Run it
 before and after a change and diff the output:
 
-    env -u PYTHONPATH uv run python scripts/handling_probe.py > /tmp/before.txt
+    uv run python scripts/handling_probe.py > /tmp/before.txt
     ...make changes...
-    env -u PYTHONPATH uv run python scripts/handling_probe.py > /tmp/after.txt
+    uv run python scripts/handling_probe.py > /tmp/after.txt
     diff /tmp/before.txt /tmp/after.txt
 
 The point of the steering tables is that yaw rate must *increase* with
@@ -15,8 +15,8 @@ is being ignored.
 
 Pass --model to compare the two vehicle models on the same numbers:
 
-    env -u PYTHONPATH uv run python scripts/handling_probe.py --model kinematic
-    env -u PYTHONPATH uv run python scripts/handling_probe.py --model dynamic
+    uv run python scripts/handling_probe.py --model kinematic
+    uv run python scripts/handling_probe.py --model dynamic
 
 The manoeuvre sections (step steer, handbrake turn, lift-off, blend band) only
 mean anything for the dynamic model, since the kinematic one cannot slide, so
