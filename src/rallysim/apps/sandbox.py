@@ -92,7 +92,11 @@ def run(car: Path | None = None, sim: Path | None = None) -> None:
             elif event.type == pygame.MOUSEWHEEL:
                 camera.zoom(1.1**event.y)
 
-        # Fixed-step physics, decoupled from the frame rate.
+        # Physics runs at a fixed step so it behaves the same at any frame rate.
+        # A long frame (a stall, or dragging the window) is clamped rather than
+        # simulated in full, and if even that needs more steps than the budget
+        # the leftover time is dropped: the clock slips, but the loop recovers
+        # instead of falling further behind every frame.
         inputs = controls.read(frame_dt)
         accumulator += min(frame_dt, 0.25)
         steps = 0

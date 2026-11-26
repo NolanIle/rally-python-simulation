@@ -26,7 +26,7 @@ YAW_RATE = 6  # [rad/s], counter-clockwise positive
 
 DYNAMIC_STATE_SIZE = 7
 
-# Driver inputs
+# Driver inputs: a separate index space from the state fields above.
 STEER_IN = 0  # steering command, -1 (full right) .. 1 (full left)
 THROTTLE_IN = 1  # 0 .. 1
 BRAKE_IN = 2  # 0 .. 1

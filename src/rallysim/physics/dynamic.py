@@ -14,17 +14,13 @@ the whole point:
 * Grip is one budget shared between cornering and accelerating (the friction
   circle), so throttle and brakes steer the car.
 
-Two practical limits of the approach, both handled below:
+Slip angle is ``atan(vy / vx)``, so the model is meaningless near zero speed:
+at 0.1 m/s it reports 83 deg of slip and saturated tyres. It therefore blends
+to no-slip behaviour below a few m/s, which also ends spins.
 
-* Slip angle is ``atan(vy / vx)``, which is meaningless as ``vx`` approaches
-  zero -- at 0.1 m/s it reports 83 deg of slip and saturated tyres. The model
-  therefore blends to no-slip behaviour at low speed, scaling ``vy`` away and
-  handing the yaw rate over to the kinematic value. Clamping the divisor alone
-  would not do: a car that slid to a halt would keep rotating on the spot,
-  because saturated tyres provide no damping of their own.
-* Forces are integrated with explicit Euler. That is stable here -- results
-  converge between dt = 1/60 and 1/1000, including through a 70 deg slide -- so
-  the fixed 200 Hz step has plenty of margin.
+Forces are integrated with explicit Euler. Results converge between dt = 1/60
+and 1/1000, including through a 70 deg slide, so the fixed 200 Hz step has
+plenty of margin.
 """
 
 from __future__ import annotations
@@ -85,24 +81,13 @@ class DynamicBicycle:
         yaw_rate = state[:, YAW_RATE]
         speed = np.abs(vx)
 
-        # Steering: full travel maps onto the angle the front tyre can actually
-        # use, rather than always onto full lock.
-        #
-        # Without this the model punishes the driver for steering hard. A tyre
-        # makes peak force at a few degrees of slip and *less* beyond it, so
-        # holding 30 deg of lock at 126 km/h drags the front far past its peak
-        # and yields about half the yaw rate of a fifth of that input. Real
-        # racks avoid this by being geared so full wheel lock is only reachable
-        # when slow.
-        #
-        # The usable angle is what a steady corner at the grip limit needs: the
-        # Ackermann part (wheelbase * lateral accel / v^2) plus a share of the
-        # tyre's own peak slip angle. Only a share, because once the car is
-        # cornering hard its body slip already supplies some of the front slip,
-        # so the steering has to contribute roughly half. Deriving it from the
-        # tyre means retuning the tyre moves the cap automatically. Below about
-        # 30 km/h the figure exceeds max_steer, so full lock stays available
-        # for hairpins and parking.
+        # Full travel maps onto the angle the front tyre can use, not onto full
+        # lock: past its peak slip a tyre makes *less* force, so mapping full
+        # input onto 30 deg of lock at speed would turn the car more slowly
+        # than a fifth of that input. A steady corner at the grip limit needs
+        # the Ackermann angle plus part of the peak slip -- part, because body
+        # slip already supplies the rest. Below ~30 km/h this exceeds max_steer
+        # and full lock comes back for hairpins.
         grip_limit = max(p.tyre_front.friction, p.tyre_rear.friction) * GRAVITY
         usable_steer = (
             p.wheelbase * grip_limit / np.maximum(speed, 1.0) ** 2 + 0.5 * self._peak_slip
@@ -112,9 +97,8 @@ class DynamicBicycle:
         max_change = p.steer_rate * dt
         steer = state[:, STEER] + np.clip(target - state[:, STEER], -max_change, max_change)
 
-        # --- longitudinal ---
-        # Reverse: the brake doubles as reverse gear once the car has stopped,
-        # matching the kinematic model so the two feel the same at a standstill.
+        # The brake doubles as reverse gear once the car has stopped, matching
+        # the kinematic model so the two feel the same at a standstill.
         stopped = speed < REVERSE_ENGAGE_SPEED
         in_reverse = (vx < 0.0) | (stopped & (brake > 0.0) & (throttle <= 0.0))
         direction = np.where(in_reverse, -1.0, 1.0)
@@ -136,29 +120,26 @@ class DynamicBicycle:
         # rolling resistance alone; oppose the drive instead.
         accel_long = np.where(stopped & (speed < 1e-9), direction * drive, accel_long)
 
-        # --- axle loads ---
-        # Static split from the centre of gravity, plus longitudinal transfer so
-        # braking loads the front axle and power loads the rear. Per-axle for
-        # now; a four-wheel model would split these sideways as well.
+        # Axle loads: the static split from the centre of gravity, plus
+        # longitudinal transfer so braking loads the front and power loads the
+        # rear. Per-axle for now; a four-wheel model would split these sideways
+        # as well.
         weight = p.mass * GRAVITY
         static_front = weight * p.cg_to_rear / p.wheelbase
         static_rear = weight * p.cg_to_front / p.wheelbase
-        # Assume the centre of gravity sits at a typical rally ride height; the
-        # transfer term only needs to be the right order of magnitude.
-        cg_height = 0.45
+        cg_height = 0.45  # [m] estimate; only the order of magnitude matters here
         transfer = p.mass * accel_long * cg_height / p.wheelbase
         load_front = np.maximum(static_front - transfer, 0.0)
         load_rear = np.maximum(static_rear + transfer, 0.0)
 
-        # --- slip angles ---
-        # Guard the divisor so the low-speed singularity cannot produce inf.
+        # Floor the divisor: the slip angles are meaningless near zero speed,
+        # and the blend further down discards them there anyway.
         vx_safe = np.maximum(speed, self.blend_speed_low)
         slip_front = np.arctan2(vy + yaw_rate * p.cg_to_front, vx_safe) - steer
         slip_rear = np.arctan2(vy - yaw_rate * p.cg_to_rear, vx_safe)
 
-        # --- tyre forces ---
-        # The handbrake takes grip away from the rear axle. That is what rotates
-        # the car, as opposed to the plain deceleration it caused before.
+        # Taking grip from the rear axle is what makes the handbrake rotate the
+        # car, rather than merely slowing it.
         rear_grip = 1.0 - HANDBRAKE_GRIP_LOSS * handbrake
         force_front = lateral_force(slip_front, load_front, p.tyre_front)
         force_rear = lateral_force(slip_rear, load_rear * rear_grip, p.tyre_rear)
@@ -173,7 +154,6 @@ class DynamicBicycle:
             long_per_axle, force_rear, p.tyre_rear.friction * load_rear * rear_grip
         )
 
-        # --- rigid body ---
         accel_lat = (force_front * np.cos(steer) + force_rear) / p.mass - yaw_rate * vx
         yaw_accel = (
             p.cg_to_front * force_front * np.cos(steer) - p.cg_to_rear * force_rear
@@ -190,9 +170,12 @@ class DynamicBicycle:
         vx_new = np.where(in_reverse, np.maximum(vx_new, -p.max_reverse_speed), vx_new)
         vx_new = np.where(~in_reverse, np.maximum(vx_new, 0.0), vx_new)
 
-        # --- low speed blend ---
-        # Below the band the slip angles above are fiction, so fall back to what
-        # the kinematic model would do: the car goes exactly where it points.
+        # Fade out the slip at low speed, where the angles above are fiction,
+        # and fall back to the kinematic result: the car goes where it points.
+        # This is also what ends a spin. Saturated tyres give no damping of
+        # their own, so without the blend a car that slid to a halt would keep
+        # rotating; instead vy is scaled away and the yaw rate becomes the
+        # kinematic one, which is zero at a standstill.
         speed_new = np.abs(vx_new)
         blend = np.clip(
             (speed_new - self.blend_speed_low) / (self.blend_speed_high - self.blend_speed_low),
@@ -200,14 +183,9 @@ class DynamicBicycle:
             1.0,
         )
         kinematic_yaw_rate = vx_new / p.wheelbase * np.tan(steer)
-        vy_new = blend * vy_new  # no-slip means no lateral velocity
+        vy_new = blend * vy_new
         yaw_rate_new = blend * yaw_rate_new + (1.0 - blend) * kinematic_yaw_rate
-        # This is also what stops a spin: as the car slows into the band, vy is
-        # scaled away and the yaw rate becomes the kinematic one, which is zero
-        # at a standstill. Saturated tyres give no damping of their own, so
-        # without the blend a car that slid to a halt would rotate forever.
 
-        # --- integrate pose ---
         yaw = state[:, YAW] + yaw_rate_new * dt
         yaw = (yaw + np.pi) % (2.0 * np.pi) - np.pi
         # Velocity is in the body frame, so rotate it into the world.

@@ -189,7 +189,7 @@ def load_car(path: str | Path) -> CarParams:
 class SimParams:
     """How to simulate, as opposed to what car to simulate."""
 
-    model: str  # one of MODELS
+    model: str
     physics_dt: float  # [s], fixed physics step
     # The dynamic model divides by speed to get slip angles, so it is unusable
     # at walking pace and hands over to no-slip behaviour below this band.
